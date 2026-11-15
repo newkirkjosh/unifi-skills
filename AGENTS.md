@@ -1,6 +1,6 @@
 # UniFi skill catalog
 
-This is a public, MIT-licensed catalog of reusable UniFi guidance. Keep credentials, network identifiers, personal information, machine paths and diagnostic run notes out of tracked files. Use placeholders. Network-specific knowledge stays in private project notes.
+This is a private, MIT-licensed catalog of reusable UniFi guidance. Privacy checks remain enabled even though the repository is private. Keep credentials, network identifiers, personal information, machine paths and diagnostic run notes out of tracked files. Use placeholders. Network-specific knowledge stays in private project notes.
 
 Read REVIEW.md before reviewing. Skills use the open Agent Skills format with matching directory/frontmatter names and explicit invocation descriptions. Keep scripts and references beside their skill. Preserve upstream attribution. Do not run live network operations to validate catalog changes.
 
