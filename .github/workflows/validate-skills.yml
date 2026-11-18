@@ -36,6 +36,10 @@ jobs:
             [ -e "$f" ] || continue
             bash -n "$f" || status=1
           done
+          for f in skills/*/scripts/*.py; do
+            [ -e "$f" ] || continue
+            python3 -I -m py_compile "$f" || status=1
+          done
           exit $status
       - name: Run bundled script tests
         run: |

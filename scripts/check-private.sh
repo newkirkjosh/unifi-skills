@@ -29,14 +29,27 @@ done
 args=()
 for p in "${patterns[@]}"; do args+=(-e "$p"); done
 
+# grep exits 1 for no match; anything above that (a bad pattern, a failed git
+# command) is an error, never a clean result.
+scan() {
+  local rc=0
+  hits="$("$@")" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "check-private: scan failed (exit $rc); fix the pattern or the command" >&2
+    exit 2
+  fi
+}
+staged() {
+  git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self" \
+    | { grep -E '^\+' || [ $? -eq 1 ]; } | { grep -vE '^\+\+\+ ' || [ $? -eq 1 ]; } | grep -inE "${args[@]}"
+}
+msg() { grep -vE '^#' "$1" | grep -inE "${args[@]}"; }
+
+hits=""
 case "${1:---all}" in
-  --staged)
-    hits="$(git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self" \
-      | grep -E '^\+' | grep -vE '^\+\+\+ ' | grep -inE "${args[@]}" || true)" ;;
-  --msg)
-    hits="$(grep -vE '^#' "$2" | grep -inE "${args[@]}" || true)" ;;
-  --all)
-    hits="$(git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self" || true)" ;;
+  --staged) scan staged ;;
+  --msg) scan msg "$2" ;;
+  --all) scan git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self" ;;
   *)
     echo "usage: $0 [--staged | --msg <file> | --all]" >&2; exit 2 ;;
 esac
