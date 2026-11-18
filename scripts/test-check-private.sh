@@ -93,7 +93,9 @@ g() { git -C "$tmp/repo" -c user.name=t -c user.email=t@example.com -c commit.gp
 printf 'old secret-npc\n' > "$tmp/repo/gone.txt"; g add gone.txt; g commit -qm add; g rm -q gone.txt; g commit -qm remove
 expect 0 "removed content is not in the tree" --all
 expect 1 "removed content is in history" --history
-printf 'clean\n' > "$tmp/repo/secret-npc-notes.txt"; g add secret-npc-notes.txt; g commit -qm name; g mv secret-npc-notes.txt plain.txt; g commit -qm rename
+printf 'renamed-away\n' > "$tmp/repo/private-terms.local"
+expect 0 "term not in history yet" --history
+printf 'clean\n' > "$tmp/repo/renamed-away-notes.txt"; g add renamed-away-notes.txt; g commit -qm name; g mv renamed-away-notes.txt plain.txt; g commit -qm rename
 g rm -q plain.txt; g commit -qm drop
 expect 1 "private name renamed away, same content" --history
 rm "$tmp/repo/private-terms.local"
