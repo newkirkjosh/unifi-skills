@@ -79,4 +79,6 @@ jobs:
         run: |
           git log --all --format=%B > "$RUNNER_TEMP/messages.txt"
           "$RUNNER_TEMP/gitleaks" dir --redact --no-banner "$RUNNER_TEMP/messages.txt"
-          bash scripts/check-private.sh --msg "$RUNNER_TEMP/messages.txt"
+          bash scripts/check-private.sh --published-msg "$RUNNER_TEMP/messages.txt"
+      - name: Scan history for private patterns
+        run: bash scripts/check-private.sh --history

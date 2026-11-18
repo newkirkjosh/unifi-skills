@@ -8,6 +8,8 @@
 #
 # usage: scripts/check-private.sh --staged      added lines in the index
 #        scripts/check-private.sh --msg <file>  a commit message
+#        scripts/check-private.sh --published-msg <file>  committed messages, every line
+#        scripts/check-private.sh --history     every path and blob reachable from any ref (CI)
 #        scripts/check-private.sh [--all]       every tracked file (CI)
 set -euo pipefail
 
@@ -50,9 +52,11 @@ match() { # <label> <file>: append "<label>:<line>:<text>" for each matching lin
 }
 
 # The private-terms file is configuration, never content: reject it in the index.
-if [ "${1:---all}" != --msg ] && [ -n "$(git -C "$root" ls-files -- private-terms.local 2>"$errs")" ]; then
+case "${1:---all}" in --msg|--published-msg|--history) ;; *)
+if [ -n "$(git -C "$root" ls-files -- private-terms.local 2>"$errs")" ]; then
   hits="private-terms.local is tracked or staged"$'\n'
-fi
+fi ;;
+esac
 case "${1:---all}" in
   --staged)
     git -C "$root" diff --cached -U0 --no-color --text -- . >"$tmp/diff" 2>"$errs" || die "git diff failed"
@@ -66,6 +70,21 @@ case "${1:---all}" in
     rc=0; LC_ALL=C grep -avE '^#' "$2" >"$tmp/msg" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "cannot read message file: $2"
     match msg "$tmp/msg" ;;
+  --published-msg)
+    [ -r "${2:-}" ] || die "cannot read message file: ${2:-<none>}"
+    match msg "$2" ;;
+  --history)
+    git -C "$root" rev-list --objects --all >"$tmp/objects" 2>"$errs" || die "git rev-list failed"
+    git -C "$root" cat-file --batch-check='%(objecttype) %(objectname) %(rest)' <"$tmp/objects" >"$tmp/typed" 2>"$errs" || die "git cat-file failed"
+    : >"$tmp/blobs"; : >"$tmp/paths"
+    while read -r type sha path; do
+      [ "$type" = blob ] || continue
+      git -C "$root" cat-file blob "$sha" >>"$tmp/blobs" 2>"$errs" || die "git cat-file failed"
+      printf '\n' >>"$tmp/blobs"
+      printf '%s\0' "$path" >>"$tmp/paths"
+      [ "${path##*/}" != private-terms.local ] || hits+="private-terms.local is in history"$'\n'
+    done <"$tmp/typed"
+    match blob "$tmp/blobs"; match_paths "$tmp/paths" ;;
   --all)
     rc=0; LC_ALL=C git -C "$root" grep --cached --text -inE "${args[@]}" -- . >"$tmp/tree" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
@@ -83,7 +102,7 @@ case "${1:---all}" in
     done <"$tmp/stage"
     match link "$tmp/links" ;;
   *)
-    echo "usage: $0 [--staged | --msg <file> | --all]" >&2; exit 2 ;;
+    echo "usage: $0 [--staged | --msg <file> | --published-msg <file> | --history | --all]" >&2; exit 2 ;;
 esac
 hits="${hits%$'\n'}"
 

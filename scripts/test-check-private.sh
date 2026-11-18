@@ -85,6 +85,13 @@ printf '^nothing-matches$\n' > "$tmp/repo/private-terms.local"; git -C "$tmp/rep
 expect 1 "force-added private-terms file (tree)" --all
 expect 1 "force-added private-terms file (staged)" --staged
 git -C "$tmp/repo" rm -q --cached private-terms.local
+printf '# heading secret-npc\n' > "$tmp/msg"
+expect 0 "draft message comment ignored" --msg "$tmp/msg"
+expect 1 "published message keeps hash lines" --published-msg "$tmp/msg"
+g() { git -C "$tmp/repo" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false "$@"; }
+printf 'old secret-npc\n' > "$tmp/repo/gone.txt"; g add gone.txt; g commit -qm add; g rm -q gone.txt; g commit -qm remove
+expect 0 "removed content is not in the tree" --all
+expect 1 "removed content is in history" --history
 rm "$tmp/repo/private-terms.local"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
