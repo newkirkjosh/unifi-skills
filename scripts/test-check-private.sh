@@ -56,6 +56,11 @@ git -C "$tmp/repo" rm -q --cached -- "$(printf 'tab\tname')" "$(printf 'caf\303\
 printf 'one\n\n' > "$tmp/msg"; printf '^$\n' > "$tmp/repo/private-terms.local"
 expect 1 "trailing blank line kept" --msg "$tmp/msg"
 printf '' > "$tmp/msg"; expect 0 "empty message is clean" --msg "$tmp/msg"
+printf 'bin\0ary secret-npc\n' > "$tmp/repo/blob.bin"; git -C "$tmp/repo" add blob.bin
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "private term in binary content" --all
+expect 1 "private term in staged binary content" --staged
+git -C "$tmp/repo" rm -q --cached blob.bin; rm "$tmp/repo/blob.bin"
 rm "$tmp/repo/private-terms.local"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged

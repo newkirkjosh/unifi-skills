@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # First, before any step that can echo paths or source text.
+      - name: Check tracked files for private patterns
+        run: bash scripts/check-private.sh --all
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -50,8 +53,6 @@ jobs:
             bash "$t" || status=1
           done
           exit $status
-      - name: Check tracked files for private patterns
-        run: bash scripts/check-private.sh --all
 
   secrets:
     name: Scan full history for secrets

@@ -45,14 +45,14 @@ match_paths() { # <file of NUL-separated raw paths>: each path is one record
 }
 match() { # <label> <file>: append "<label>:<line>:<text>" for each matching line
   local rc=0 out
-  out="$(grep -inE "${args[@]}" "$2" 2>"$errs")" || rc=$?
+  out="$(grep -ainE "${args[@]}" "$2" 2>"$errs")" || rc=$?
   [ "$rc" -le 1 ] || die "bad pattern or read error"
   [ -z "$out" ] || hits+="$(sed "s|^|$1:|" <<<"$out")"$'\n'
 }
 
 case "${1:---all}" in
   --staged)
-    git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self" >"$tmp/diff" 2>"$errs" || die "git diff failed"
+    git -C "$root" diff --cached -U0 --no-color --text -- . ":(exclude)$self" >"$tmp/diff" 2>"$errs" || die "git diff failed"
     # Added lines are the "+" lines inside hunks; file headers ("+++ b/...")
     # sit between "diff --git" and the first "@@" and are skipped.
     awk '/^diff --git /{h=1; next} /^@@/{h=0; next} !h && /^\+/{print substr($0, 2)}' "$tmp/diff" >"$tmp/added" || die "parsing the staged diff failed"
@@ -64,7 +64,7 @@ case "${1:---all}" in
     [ "$rc" -le 1 ] || die "cannot read message file: $2"
     match msg "$tmp/msg" ;;
   --all)
-    rc=0; git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self" >"$tmp/tree" 2>"$errs" || rc=$?
+    rc=0; git -C "$root" grep --text -inE "${args[@]}" -- . ":(exclude)$self" >"$tmp/tree" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
     [ ! -s "$tmp/tree" ] || hits+="$(cat "$tmp/tree")"$'\n'
     git -C "$root" ls-files -z >"$tmp/paths" 2>"$errs" || die "git ls-files failed"
