@@ -85,6 +85,7 @@ printf '^nothing-matches$\n' > "$tmp/repo/private-terms.local"; git -C "$tmp/rep
 expect 1 "force-added private-terms file (tree)" --all
 expect 1 "force-added private-terms file (staged)" --staged
 git -C "$tmp/repo" rm -q --cached private-terms.local
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
 printf '# heading secret-npc\n' > "$tmp/msg"
 expect 0 "draft message comment ignored" --msg "$tmp/msg"
 expect 1 "published message keeps hash lines" --published-msg "$tmp/msg"
