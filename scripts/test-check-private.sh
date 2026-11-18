@@ -61,6 +61,15 @@ printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
 expect 1 "private term in binary content" --all
 expect 1 "private term in staged binary content" --staged
 git -C "$tmp/repo" rm -q --cached blob.bin; rm "$tmp/repo/blob.bin"
+printf 'x\n' > "$tmp/repo/$(printf 'bad\377-secret-npc')"; git -C "$tmp/repo" add -A
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "term in a path with invalid UTF-8" --all
+expect 1 "term in a staged path with invalid UTF-8" --staged
+git -C "$tmp/repo" rm -q --cached -- "$(printf 'bad\377-secret-npc')"; rm "$tmp/repo/$(printf 'bad\377-secret-npc')"
+printf '# secret-npc\n' >> "$tmp/repo/scripts/check-private.sh"; git -C "$tmp/repo" add scripts/check-private.sh
+expect 1 "term added to the scanner itself" --all
+expect 1 "term staged in the scanner itself" --staged
+cp "$here/check-private.sh" "$tmp/repo/scripts/"; git -C "$tmp/repo" add scripts/check-private.sh
 rm "$tmp/repo/private-terms.local"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
