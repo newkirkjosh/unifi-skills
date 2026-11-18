@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   validate:
+    # After the scans: validators can echo source into this public log.
+    needs: secrets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +65,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Private patterns first: these print counts only.
+      - name: Scan history for private patterns
+        run: bash scripts/check-private.sh --history
+      - name: Scan commit messages for private patterns
+        run: |
+          bash scripts/check-private.sh --export-messages "$RUNNER_TEMP/messages.txt"
+          bash scripts/check-private.sh --published-msg "$RUNNER_TEMP/messages.txt"
       - name: Install gitleaks
         env:
           VERSION: 8.30.1
@@ -73,12 +82,12 @@ jobs:
           curl -sSfL -o "$tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
           echo "$SHA256  $tgz" | sha256sum -c -
           tar -xzf "$tgz" -C "$RUNNER_TEMP" gitleaks
+      # Findings name source paths, so only the result reaches this public log.
       - name: Scan full history for secrets
-        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --log-opts="--all --full-history -m" .'
-      - name: Scan commit messages
         run: |
-          bash scripts/check-private.sh --export-messages "$RUNNER_TEMP/messages.txt"
-          "$RUNNER_TEMP/gitleaks" dir --redact --no-banner "$RUNNER_TEMP/messages.txt"
-          bash scripts/check-private.sh --published-msg "$RUNNER_TEMP/messages.txt"
-      - name: Scan history for private patterns
-        run: bash scripts/check-private.sh --history
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --log-opts="--all --full-history -m" . >/dev/null 2>&1 \
+            || { echo "gitleaks found a secret in history; run it locally"; exit 1; }
+      - name: Scan commit messages for secrets
+        run: |
+          "$RUNNER_TEMP/gitleaks" dir --redact --no-banner "$RUNNER_TEMP/messages.txt" >/dev/null 2>&1 \
+            || { echo "gitleaks found a secret in a commit message; run it locally"; exit 1; }

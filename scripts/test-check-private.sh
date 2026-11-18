@@ -138,7 +138,8 @@ bash "$r3/scripts/check-private.sh" --export-messages "$tmp/m3"
 printf '^$\n' > "$r3/private-terms.local"
 if bash "$r3/scripts/check-private.sh" --published-msg "$tmp/m3" 2>/dev/null; then echo "ok   exported messages gain no blank line"; else echo "FAIL export invented a blank line"; fail=1; fi
 rm "$r3/private-terms.local"
-mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
-PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
-PATH="$tmp/bin:$PATH" expect 2 "failed git grep" --all
+real_git="$(command -v git)"; mkdir -p "$tmp/bin"
+fail_sub() { printf '#!/bin/sh\n[ "$3" = %s ] && exit 128\nexec "%s" "$@"\n' "$1" "$real_git" > "$tmp/bin/git"; chmod +x "$tmp/bin/git"; }
+fail_sub diff; PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
+fail_sub grep; PATH="$tmp/bin:$PATH" expect 2 "failed git grep" --all
 exit $fail
