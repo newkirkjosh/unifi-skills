@@ -17,9 +17,20 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 patterns=('/var/[h]ome/' '/[h]ome/[a-z_][a-z0-9_-]*/' '/[U]sers/[A-Za-z]')
+# A duplicated descriptor, not /dev/stderr: reopening that truncates a log file.
+if [ -n "${CI:-}" ]; then exec 3>/dev/null; else exec 3>&2; fi
+die() { echo "check-private: $1" >&2; exit 2; }
+# Never load a tracked copy as configuration: it is flagged below instead.
+terms_tracked="$(git -C "$root" ls-files -- private-terms.local 2>&3)" || die "git ls-files failed"
 found_terms=0
 for f in "${XDG_CONFIG_HOME:-$HOME/.config}/git/private-terms" "$root/private-terms.local"; do
-  [ -f "$f" ] || continue
+  [ "$f" != "$root/private-terms.local" ] || [ -z "$terms_tracked" ] || continue
+  # Absent is fine; present but unreadable must not silently drop the terms.
+  if ! err="$(LC_ALL=C stat -- "$f" 2>&1 >/dev/null)"; then
+    case "$err" in *"No such file or directory"*) continue ;; esac
+    die "cannot read a private-terms file"
+  fi
+  [ -f "$f" ] && [ -r "$f" ] || die "cannot read a private-terms file"
   found_terms=1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|'#'*) continue ;; esac
@@ -36,9 +47,6 @@ for p in "${patterns[@]}"; do args+=(-e "$p"); done
 # match; anything above that is an error, never a clean result. In CI, raw
 # scanner errors are suppressed too: they can echo a private pattern.
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-# A duplicated descriptor, not /dev/stderr: reopening that truncates a log file.
-if [ -n "${CI:-}" ]; then exec 3>/dev/null; else exec 3>&2; fi
-die() { echo "check-private: $1" >&2; exit 2; }
 hits=""
 match_paths() { # <file of NUL-separated raw paths>: each path is one record
   local rc=0
@@ -57,8 +65,7 @@ match() { # <label> <file>: append "<label>:<line>:<text>" for each matching lin
 
 # The private-terms file is configuration, never content: reject it in the index.
 case "${1:---all}" in --msg|--published-msg|--history|--export-messages) ;; *)
-tracked="$(git -C "$root" ls-files -- private-terms.local 2>&3)" || die "git ls-files failed"
-if [ -n "$tracked" ]; then
+if [ -n "$terms_tracked" ]; then
   hits="private-terms.local is tracked or staged"$'\n'
 fi ;;
 esac
@@ -85,8 +92,10 @@ case "${1:---all}" in
     : >"$2"
     while read -r commit; do
       git -C "$root" cat-file commit "$commit" >"$tmp/commit" 2>&3 || die "git cat-file failed"
-      LC_ALL=C sed '1,/^$/d' "$tmp/commit" >>"$2" || die "reading a commit message failed"
-      printf '\n' >>"$2"
+      LC_ALL=C sed '1,/^$/d' "$tmp/commit" >"$tmp/message" || die "reading a commit message failed"
+      cat "$tmp/message" >>"$2"
+      # Separate messages without inventing a blank line.
+      if [ -s "$tmp/message" ] && [ "$(tail -c1 "$tmp/message" | wc -l)" -eq 0 ]; then printf '\n' >>"$2"; fi
     done <"$tmp/commits"
     exit 0 ;;
   --history)

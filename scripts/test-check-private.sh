@@ -122,6 +122,22 @@ PATH="$tmp/fake:$PATH" bash "$r2/scripts/check-private.sh" --staged >/dev/null 2
 if [ "$rc" -eq 2 ]; then echo "ok   failed terms-file lookup fails closed"; else echo "FAIL terms-file lookup rc $rc"; fail=1; fi
 { echo keep-this-line; bash "$r2/scripts/check-private.sh" --msg "$tmp/messages"; } >"$tmp/log" 2>&1 || true
 if head -1 "$tmp/log" | grep -q '^keep-this-line$'; then echo "ok   a caller's log file is not truncated"; else echo "FAIL the scanner truncated its caller's log"; fail=1; fi
+cfg="$tmp/cfg-test"; mkdir -p "$cfg/git"; ln -s "$cfg/missing" "$cfg/git/private-terms"
+XDG_CONFIG_HOME="$cfg" bash "$r2/scripts/check-private.sh" --all >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then echo "ok   dangling private-terms link fails closed"; else echo "FAIL dangling terms link rc $rc"; fail=1; fi
+rm "$cfg/git/private-terms"; printf 'x\n' > "$cfg/git/private-terms"; chmod 000 "$cfg/git"
+XDG_CONFIG_HOME="$cfg" bash "$r2/scripts/check-private.sh" --all >/dev/null 2>&1; rc=$?; chmod 755 "$cfg/git"
+if [ "$rc" -eq 2 ] || [ "$(id -u)" -eq 0 ]; then echo "ok   unreadable terms folder fails closed"; else echo "FAIL unreadable terms folder rc $rc"; fail=1; fi
+r3="$tmp/repo3"; mkdir -p "$r3/scripts"; cp "$here/check-private.sh" "$r3/scripts/"; git -C "$r3" init -q
+printf '(never-repeat-me\n' > "$r3/private-terms.local"; git -C "$r3" add -f private-terms.local
+bash "$r3/scripts/check-private.sh" --all >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   malformed tracked terms file is flagged, not loaded"; else echo "FAIL malformed tracked terms rc $rc"; fail=1; fi
+git -C "$r3" rm -q --cached private-terms.local; rm "$r3/private-terms.local"
+printf 'x\n' > "$r3/a"; git -C "$r3" add a; git -C "$r3" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm subject
+bash "$r3/scripts/check-private.sh" --export-messages "$tmp/m3"
+printf '^$\n' > "$r3/private-terms.local"
+if bash "$r3/scripts/check-private.sh" --published-msg "$tmp/m3" 2>/dev/null; then echo "ok   exported messages gain no blank line"; else echo "FAIL export invented a blank line"; fail=1; fi
+rm "$r3/private-terms.local"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
 PATH="$tmp/bin:$PATH" expect 2 "failed git grep" --all
