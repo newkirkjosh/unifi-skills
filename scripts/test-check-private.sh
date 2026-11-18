@@ -8,6 +8,7 @@ export XDG_CONFIG_HOME="$tmp/config" HOME="$tmp/home"
 mkdir -p "$tmp/repo/scripts" "$HOME"
 cp "$here/check-private.sh" "$tmp/repo/scripts/"
 git -C "$tmp/repo" init -q
+printf '/private-terms.local\n' > "$tmp/repo/.gitignore"; git -C "$tmp/repo" add .gitignore
 git -C "$tmp/repo" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty -m init
 check() { bash "$tmp/repo/scripts/check-private.sh" "$@" 2>"$tmp/err"; }
 fail=0
@@ -45,7 +46,7 @@ CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI output names a ma
 printf '(secret\n' > "$tmp/repo/private-terms.local"
 CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI error output echoes a pattern"; fail=1; } || echo "ok   CI error output hides the pattern"
 git -C "$tmp/repo" rm -q --cached secret-npc.md; rm "$tmp/repo/secret-npc.md"
-printf 'x\n' > "$tmp/repo/$(printf 'tab\tname')"; printf 'x\n' > "$tmp/repo/caf\303\251-npc.md"
+printf 'x\n' > "$tmp/repo/$(printf 'tab\tname')"; printf 'x\n' > "$tmp/repo/$(printf 'caf\303\251-npc.md')"
 git -C "$tmp/repo" add -A
 printf '^tab\tname$\n' > "$tmp/repo/private-terms.local"
 expect 1 "anchored term in a path with a tab" --all
@@ -76,6 +77,14 @@ expect 1 "term in a symlink target" --all
 git -C "$tmp/repo" rm -q --cached innocent-link; rm "$tmp/repo/innocent-link"
 printf 'ok\0\nsecret-npc\n' > "$tmp/msg"
 expect 1 "term in a message with a NUL byte" --msg "$tmp/msg"
+printf 'staged-only secret-npc\n' > "$tmp/repo/d.txt"; git -C "$tmp/repo" add d.txt; rm "$tmp/repo/d.txt"
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "term staged but gone from the working tree" --all
+git -C "$tmp/repo" rm -q --cached d.txt
+printf '^nothing-matches$\n' > "$tmp/repo/private-terms.local"; git -C "$tmp/repo" add -f private-terms.local
+expect 1 "force-added private-terms file (tree)" --all
+expect 1 "force-added private-terms file (staged)" --staged
+git -C "$tmp/repo" rm -q --cached private-terms.local
 rm "$tmp/repo/private-terms.local"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged

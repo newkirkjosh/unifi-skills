@@ -49,6 +49,10 @@ match() { # <label> <file>: append "<label>:<line>:<text>" for each matching lin
   [ "$rc" -eq 1 ] || hits+="$(LC_ALL=C grep -ainE "${args[@]}" "$2" 2>/dev/null | sed "s|^|$1:|")"$'\n'
 }
 
+# The private-terms file is configuration, never content: reject it in the index.
+if [ "${1:---all}" != --msg ] && [ -n "$(git -C "$root" ls-files -- private-terms.local 2>"$errs")" ]; then
+  hits="private-terms.local is tracked or staged"$'\n'
+fi
 case "${1:---all}" in
   --staged)
     git -C "$root" diff --cached -U0 --no-color --text -- . >"$tmp/diff" 2>"$errs" || die "git diff failed"
@@ -63,7 +67,7 @@ case "${1:---all}" in
     [ "$rc" -le 1 ] || die "cannot read message file: $2"
     match msg "$tmp/msg" ;;
   --all)
-    rc=0; LC_ALL=C git -C "$root" grep --text -inE "${args[@]}" -- . >"$tmp/tree" 2>"$errs" || rc=$?
+    rc=0; LC_ALL=C git -C "$root" grep --cached --text -inE "${args[@]}" -- . >"$tmp/tree" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
     [ ! -s "$tmp/tree" ] || hits+="$(cat "$tmp/tree")"$'\n'
     git -C "$root" ls-files -z >"$tmp/paths" 2>"$errs" || die "git ls-files failed"

@@ -75,3 +75,8 @@ jobs:
           tar -xzf "$tgz" -C "$RUNNER_TEMP" gitleaks
       - name: Scan full history for secrets
         run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --log-opts="--all --full-history -m" .'
+      - name: Scan commit messages
+        run: |
+          git log --all --format=%B > "$RUNNER_TEMP/messages.txt"
+          "$RUNNER_TEMP/gitleaks" dir --redact --no-banner "$RUNNER_TEMP/messages.txt"
+          bash scripts/check-private.sh --msg "$RUNNER_TEMP/messages.txt"
