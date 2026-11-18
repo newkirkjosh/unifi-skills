@@ -29,33 +29,32 @@ done
 args=()
 for p in "${patterns[@]}"; do args+=(-e "$p"); done
 
-# Read the input first and fail on any read error; then match. grep exits 1
-# for no match; anything above that (a bad pattern) is an error, never a
-# clean result.
-match() {
-  local rc=0
-  hits="$(grep -inE "${args[@]}" <<<"$1")" || rc=$?
-  if [ "$rc" -gt 1 ]; then
-    echo "check-private: bad pattern (grep exit $rc)" >&2
-    exit 2
-  fi
-}
+# Patterns match raw line content, so anchors (^term$) work. grep and
+# git grep exit 1 for no match; anything above that (a bad pattern, a failed
+# read) is an error, never a clean result.
 die() { echo "check-private: $1" >&2; exit 2; }
+match() { # <label> : match stdin lines; hits get "<label>:<n>:" prefixes
+  local rc=0
+  hits="$(grep -inE "${args[@]}")" || rc=$?
+  [ "$rc" -le 1 ] || die "bad pattern or read error (grep exit $rc)"
+}
 
 hits=""
 case "${1:---all}" in
   --staged)
-    input="$(git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self")" || die "git diff failed"
-    match "$(grep -E '^\+' <<<"$input" | grep -vE '^\+\+\+ ' || true)" ;;
+    diff="$(git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self")" || die "git diff failed"
+    # Added lines are the "+" lines inside hunks; file headers ("+++ b/...")
+    # sit between "diff --git" and the first "@@" and are skipped.
+    added="$(awk '/^diff --git /{h=1; next} /^@@/{h=0; next} !h && /^\+/{print substr($0, 2)}' <<<"$diff")" || die "parsing the staged diff failed"
+    match <<<"$added" ;;
   --msg)
     [ -r "${2:-}" ] || die "cannot read message file: ${2:-<none>}"
-    rc=0; input="$(grep -vE '^#' "$2")" || rc=$?
+    rc=0; body="$(grep -vE '^#' "$2")" || rc=$?
     [ "$rc" -le 1 ] || die "cannot read message file: $2"
-    match "$input" ;;
+    match <<<"$body" ;;
   --all)
-    rc=0; input="$(git -C "$root" grep -nI -e '' -- . ":(exclude)$self")" || rc=$?
-    [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
-    match "$input" ;;
+    rc=0; hits="$(git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self")" || rc=$?
+    [ "$rc" -le 1 ] || die "git grep failed (exit $rc)" ;;
   *)
     echo "usage: $0 [--staged | --msg <file> | --all]" >&2; exit 2 ;;
 esac
@@ -63,10 +62,8 @@ esac
 if [ -n "$hits" ]; then
   echo "check-private: private terms found (this repo is public; see AGENTS.md, Security and privacy):" >&2
   if [ -n "${CI:-}" ]; then
-    # CI logs are public: name the place, never repeat the match.
-    if [ "${1:---all}" = --all ]; then cut -d: -f2,3 <<<"$hits" >&2; else cut -d: -f1 <<<"$hits" | sed 's/^/line /' >&2; fi
-  elif [ "${1:---all}" = --all ]; then
-    cut -d: -f2- <<<"$hits" >&2
+    # CI logs are public: never repeat a match or a path that may contain one.
+    echo "$(wc -l <<<"$hits") matching line(s); run scripts/check-private.sh locally to see them." >&2
   else
     echo "$hits" >&2
   fi
