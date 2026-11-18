@@ -29,35 +29,44 @@ done
 args=()
 for p in "${patterns[@]}"; do args+=(-e "$p"); done
 
-# Patterns match raw line content, so anchors (^term$) work. grep and
-# git grep exit 1 for no match; anything above that (a bad pattern, a failed
-# read) is an error, never a clean result.
+# Patterns match raw line content (anchors work) and file paths. Producers
+# write to temp files so line boundaries survive exactly. grep exits 1 for no
+# match; anything above that is an error, never a clean result. In CI, raw
+# scanner errors are suppressed too: they can echo a private pattern.
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+errs=/dev/stderr; [ -z "${CI:-}" ] || errs=/dev/null
 die() { echo "check-private: $1" >&2; exit 2; }
-match() { # <label> : match stdin lines; hits get "<label>:<n>:" prefixes
-  local rc=0
-  hits="$(grep -inE "${args[@]}")" || rc=$?
-  [ "$rc" -le 1 ] || die "bad pattern or read error (grep exit $rc)"
+hits=""
+match() { # <label> <file>: append "<label>:<line>:<text>" for each matching line
+  local rc=0 out
+  out="$(grep -inE "${args[@]}" "$2" 2>"$errs")" || rc=$?
+  [ "$rc" -le 1 ] || die "bad pattern or read error"
+  [ -z "$out" ] || hits+="$(sed "s|^|$1:|" <<<"$out")"$'\n'
 }
 
-hits=""
 case "${1:---all}" in
   --staged)
-    diff="$(git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self")" || die "git diff failed"
+    git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self" >"$tmp/diff" 2>"$errs" || die "git diff failed"
     # Added lines are the "+" lines inside hunks; file headers ("+++ b/...")
     # sit between "diff --git" and the first "@@" and are skipped.
-    added="$(awk '/^diff --git /{h=1; next} /^@@/{h=0; next} !h && /^\+/{print substr($0, 2)}' <<<"$diff")" || die "parsing the staged diff failed"
-    match <<<"$added" ;;
+    awk '/^diff --git /{h=1; next} /^@@/{h=0; next} !h && /^\+/{print substr($0, 2)}' "$tmp/diff" >"$tmp/added" || die "parsing the staged diff failed"
+    git -C "$root" diff --cached --name-only --no-renames --diff-filter=d -- . >"$tmp/paths" 2>"$errs" || die "git diff failed"
+    match added "$tmp/added"; match path "$tmp/paths" ;;
   --msg)
     [ -r "${2:-}" ] || die "cannot read message file: ${2:-<none>}"
-    rc=0; body="$(grep -vE '^#' "$2")" || rc=$?
+    rc=0; grep -vE '^#' "$2" >"$tmp/msg" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "cannot read message file: $2"
-    match <<<"$body" ;;
+    match msg "$tmp/msg" ;;
   --all)
-    rc=0; hits="$(git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self")" || rc=$?
-    [ "$rc" -le 1 ] || die "git grep failed (exit $rc)" ;;
+    rc=0; git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self" >"$tmp/tree" 2>"$errs" || rc=$?
+    [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
+    [ ! -s "$tmp/tree" ] || hits+="$(cat "$tmp/tree")"$'\n'
+    git -C "$root" ls-files >"$tmp/paths" 2>"$errs" || die "git ls-files failed"
+    match path "$tmp/paths" ;;
   *)
     echo "usage: $0 [--staged | --msg <file> | --all]" >&2; exit 2 ;;
 esac
+hits="${hits%$'\n'}"
 
 if [ -n "$hits" ]; then
   echo "check-private: private terms found (this repo is public; see AGENTS.md, Security and privacy):" >&2

@@ -36,6 +36,19 @@ printf '++ %s\n' private-device > "$tmp/repo/c.txt"; git -C "$tmp/repo" add c.tx
 printf 'private-device\n' > "$tmp/repo/private-terms.local"
 expect 1 "added line starting with ++" --staged
 rm "$tmp/repo/private-terms.local"
+git -C "$tmp/repo" rm -q --cached c.txt; rm "$tmp/repo/c.txt"
+printf 'x\n' > "$tmp/repo/secret-npc.md"; git -C "$tmp/repo" add secret-npc.md
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "private term in a tracked path" --all
+expect 1 "private term in a staged path" --staged
+CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI output names a matching path"; fail=1; } || echo "ok   CI output omits matching paths"
+printf '(secret\n' > "$tmp/repo/private-terms.local"
+CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI error output echoes a pattern"; fail=1; } || echo "ok   CI error output hides the pattern"
+git -C "$tmp/repo" rm -q --cached secret-npc.md; rm "$tmp/repo/secret-npc.md"
+printf 'one\n\n' > "$tmp/msg"; printf '^$\n' > "$tmp/repo/private-terms.local"
+expect 1 "trailing blank line kept" --msg "$tmp/msg"
+printf '' > "$tmp/msg"; expect 0 "empty message is clean" --msg "$tmp/msg"
+rm "$tmp/repo/private-terms.local"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
 PATH="$tmp/bin:$PATH" expect 2 "failed git grep" --all
