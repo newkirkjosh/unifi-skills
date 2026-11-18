@@ -37,6 +37,12 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 errs=/dev/stderr; [ -z "${CI:-}" ] || errs=/dev/null
 die() { echo "check-private: $1" >&2; exit 2; }
 hits=""
+match_paths() { # <file of NUL-separated raw paths>: each path is one record
+  local rc=0 out
+  out="$(grep -ziE "${args[@]}" "$1" 2>"$errs" | tr '\0' '\n')" || rc=$?
+  [ "$rc" -le 1 ] || die "bad pattern or read error"
+  [ -z "$out" ] || hits+="$(sed 's|^|path:|' <<<"$out")"$'\n'
+}
 match() { # <label> <file>: append "<label>:<line>:<text>" for each matching line
   local rc=0 out
   out="$(grep -inE "${args[@]}" "$2" 2>"$errs")" || rc=$?
@@ -50,8 +56,8 @@ case "${1:---all}" in
     # Added lines are the "+" lines inside hunks; file headers ("+++ b/...")
     # sit between "diff --git" and the first "@@" and are skipped.
     awk '/^diff --git /{h=1; next} /^@@/{h=0; next} !h && /^\+/{print substr($0, 2)}' "$tmp/diff" >"$tmp/added" || die "parsing the staged diff failed"
-    git -C "$root" diff --cached --name-only --no-renames --diff-filter=d -- . >"$tmp/paths" 2>"$errs" || die "git diff failed"
-    match added "$tmp/added"; match path "$tmp/paths" ;;
+    git -C "$root" diff --cached --name-only -z --no-renames --diff-filter=d -- . >"$tmp/paths" 2>"$errs" || die "git diff failed"
+    match added "$tmp/added"; match_paths "$tmp/paths" ;;
   --msg)
     [ -r "${2:-}" ] || die "cannot read message file: ${2:-<none>}"
     rc=0; grep -vE '^#' "$2" >"$tmp/msg" 2>"$errs" || rc=$?
@@ -61,15 +67,15 @@ case "${1:---all}" in
     rc=0; git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self" >"$tmp/tree" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
     [ ! -s "$tmp/tree" ] || hits+="$(cat "$tmp/tree")"$'\n'
-    git -C "$root" ls-files >"$tmp/paths" 2>"$errs" || die "git ls-files failed"
-    match path "$tmp/paths" ;;
+    git -C "$root" ls-files -z >"$tmp/paths" 2>"$errs" || die "git ls-files failed"
+    match_paths "$tmp/paths" ;;
   *)
     echo "usage: $0 [--staged | --msg <file> | --all]" >&2; exit 2 ;;
 esac
 hits="${hits%$'\n'}"
 
 if [ -n "$hits" ]; then
-  echo "check-private: private terms found (this repo is public; see AGENTS.md, Security and privacy):" >&2
+  echo "check-private: private terms found (this repo is public; see AGENTS.md):" >&2
   if [ -n "${CI:-}" ]; then
     # CI logs are public: never repeat a match or a path that may contain one.
     echo "$(wc -l <<<"$hits") matching line(s); run scripts/check-private.sh locally to see them." >&2

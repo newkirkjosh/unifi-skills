@@ -45,6 +45,14 @@ CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI output names a ma
 printf '(secret\n' > "$tmp/repo/private-terms.local"
 CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI error output echoes a pattern"; fail=1; } || echo "ok   CI error output hides the pattern"
 git -C "$tmp/repo" rm -q --cached secret-npc.md; rm "$tmp/repo/secret-npc.md"
+printf 'x\n' > "$tmp/repo/$(printf 'tab\tname')"; printf 'x\n' > "$tmp/repo/caf\303\251-npc.md"
+git -C "$tmp/repo" add -A
+printf '^tab\tname$\n' > "$tmp/repo/private-terms.local"
+expect 1 "anchored term in a path with a tab" --all
+expect 1 "anchored term in a staged path with a tab" --staged
+printf 'caf\303\251-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "non-ASCII term in a path" --all
+git -C "$tmp/repo" rm -q --cached -- "$(printf 'tab\tname')" "$(printf 'caf\303\251-npc.md')"; rm "$tmp/repo/$(printf 'tab\tname')" "$tmp/repo/$(printf 'caf\303\251-npc.md')"
 printf 'one\n\n' > "$tmp/msg"; printf '^$\n' > "$tmp/repo/private-terms.local"
 expect 1 "trailing blank line kept" --msg "$tmp/msg"
 printf '' > "$tmp/msg"; expect 0 "empty message is clean" --msg "$tmp/msg"
