@@ -77,7 +77,7 @@ jobs:
         run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --log-opts="--all --full-history -m" .'
       - name: Scan commit messages
         run: |
-          git log --all --format=%B > "$RUNNER_TEMP/messages.txt"
+          bash scripts/check-private.sh --export-messages "$RUNNER_TEMP/messages.txt"
           "$RUNNER_TEMP/gitleaks" dir --redact --no-banner "$RUNNER_TEMP/messages.txt"
           bash scripts/check-private.sh --published-msg "$RUNNER_TEMP/messages.txt"
       - name: Scan history for private patterns

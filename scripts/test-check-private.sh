@@ -103,6 +103,25 @@ r2="$tmp/repo2"; mkdir -p "$r2/scripts"; cp "$here/check-private.sh" "$r2/script
 printf 'x\n' > "$r2/a.txt"; git -C "$r2" add a.txt; git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm a
 printf '^$\n' > "$r2/private-terms.local"
 if bash "$r2/scripts/check-private.sh" --history 2>"$tmp/err"; then echo "ok   history adds no blank lines between blobs"; else echo "FAIL history invented a blank line"; fail=1; fi
+printf 'never-repeat-me\n' > "$r2/private-terms.local"; git -C "$r2" add -f private-terms.local
+bash "$r2/scripts/check-private.sh" --all >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   tracked terms file flagged without repeating terms"; else echo "FAIL tracked terms file output"; fail=1; fi
+bash "$r2/scripts/check-private.sh" --staged >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   staged terms file flagged without repeating terms"; else echo "FAIL staged terms file output"; fail=1; fi
+git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm terms
+bash "$r2/scripts/check-private.sh" --history >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   terms file in history flagged without repeating terms"; else echo "FAIL history terms file output"; fail=1; fi
+git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false rm -q --cached private-terms.local; git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm untrack
+tree="$(git -C "$r2" rev-parse 'HEAD^{tree}')"; parent="$(git -C "$r2" rev-parse HEAD)"
+c="$(printf 'tree %s\nparent %s\nauthor t <t@example.com> 1 +0000\ncommitter t <t@example.com> 1 +0000\n\nsubject\0hidden-after-nul\n' "$tree" "$parent" | git -C "$r2" hash-object -t commit -w --stdin --literally)"
+git -C "$r2" update-ref refs/heads/nul "$c"
+bash "$r2/scripts/check-private.sh" --export-messages "$tmp/messages"
+if LC_ALL=C grep -aq hidden-after-nul "$tmp/messages"; then echo "ok   exported messages keep text after a NUL"; else echo "FAIL message export stopped at a NUL"; fail=1; fi
+mkdir -p "$tmp/fake"; printf '#!/bin/sh\ncase "$*" in *ls-files*) exit 128;; esac\nexec /usr/bin/env -i PATH="%s" git "$@"\n' "$PATH" > "$tmp/fake/git"; chmod +x "$tmp/fake/git"
+PATH="$tmp/fake:$PATH" bash "$r2/scripts/check-private.sh" --staged >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then echo "ok   failed terms-file lookup fails closed"; else echo "FAIL terms-file lookup rc $rc"; fail=1; fi
+{ echo keep-this-line; bash "$r2/scripts/check-private.sh" --msg "$tmp/messages"; } >"$tmp/log" 2>&1 || true
+if head -1 "$tmp/log" | grep -q '^keep-this-line$'; then echo "ok   a caller's log file is not truncated"; else echo "FAIL the scanner truncated its caller's log"; fail=1; fi
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
 PATH="$tmp/bin:$PATH" expect 2 "failed git grep" --all
