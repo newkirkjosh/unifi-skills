@@ -30,7 +30,13 @@ jobs:
       - name: Check bundled files and skill references resolve
         run: bash scripts/check-refs.sh
       - name: Check scripts parse
-        run: bash -n scripts/*.sh
+        run: |
+          status=0
+          for f in scripts/*.sh skills/*/scripts/*.sh; do
+            [ -e "$f" ] || continue
+            bash -n "$f" || status=1
+          done
+          exit $status
       - name: Run bundled script tests
         run: |
           status=0
