@@ -29,33 +29,46 @@ done
 args=()
 for p in "${patterns[@]}"; do args+=(-e "$p"); done
 
-# grep exits 1 for no match; anything above that (a bad pattern, a failed git
-# command) is an error, never a clean result.
-scan() {
+# Read the input first and fail on any read error; then match. grep exits 1
+# for no match; anything above that (a bad pattern) is an error, never a
+# clean result.
+match() {
   local rc=0
-  hits="$("$@")" || rc=$?
+  hits="$(grep -inE "${args[@]}" <<<"$1")" || rc=$?
   if [ "$rc" -gt 1 ]; then
-    echo "check-private: scan failed (exit $rc); fix the pattern or the command" >&2
+    echo "check-private: bad pattern (grep exit $rc)" >&2
     exit 2
   fi
 }
-staged() {
-  git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self" \
-    | { grep -E '^\+' || [ $? -eq 1 ]; } | { grep -vE '^\+\+\+ ' || [ $? -eq 1 ]; } | grep -inE "${args[@]}"
-}
-msg() { grep -vE '^#' "$1" | grep -inE "${args[@]}"; }
+die() { echo "check-private: $1" >&2; exit 2; }
 
 hits=""
 case "${1:---all}" in
-  --staged) scan staged ;;
-  --msg) scan msg "$2" ;;
-  --all) scan git -C "$root" grep -inIE "${args[@]}" -- . ":(exclude)$self" ;;
+  --staged)
+    input="$(git -C "$root" diff --cached -U0 --no-color -- . ":(exclude)$self")" || die "git diff failed"
+    match "$(grep -E '^\+' <<<"$input" | grep -vE '^\+\+\+ ' || true)" ;;
+  --msg)
+    [ -r "${2:-}" ] || die "cannot read message file: ${2:-<none>}"
+    rc=0; input="$(grep -vE '^#' "$2")" || rc=$?
+    [ "$rc" -le 1 ] || die "cannot read message file: $2"
+    match "$input" ;;
+  --all)
+    rc=0; input="$(git -C "$root" grep -nI -e '' -- . ":(exclude)$self")" || rc=$?
+    [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
+    match "$input" ;;
   *)
     echo "usage: $0 [--staged | --msg <file> | --all]" >&2; exit 2 ;;
 esac
 
 if [ -n "$hits" ]; then
   echo "check-private: private terms found (this repo is public; see AGENTS.md, Security and privacy):" >&2
-  echo "$hits" >&2
+  if [ -n "${CI:-}" ]; then
+    # CI logs are public: name the place, never repeat the match.
+    if [ "${1:---all}" = --all ]; then cut -d: -f2,3 <<<"$hits" >&2; else cut -d: -f1 <<<"$hits" | sed 's/^/line /' >&2; fi
+  elif [ "${1:---all}" = --all ]; then
+    cut -d: -f2- <<<"$hits" >&2
+  else
+    echo "$hits" >&2
+  fi
   exit 1
 fi
