@@ -1,0 +1,66 @@
+name: Validate skills
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Agent Skills reference validator
+        run: pip install skills-ref==0.1.1
+      - name: Validate every skill against the Agent Skills spec
+        run: |
+          status=0
+          for dir in skills/*/; do
+            agentskills validate "$dir" || status=1
+          done
+          exit $status
+      - name: Check descriptions are explicit-use
+        run: bash scripts/check-descriptions.sh
+      - name: Check bundled files and skill references resolve
+        run: bash scripts/check-refs.sh
+      - name: Check scripts parse
+        run: bash -n scripts/*.sh
+      - name: Run bundled script tests
+        run: |
+          status=0
+          for t in scripts/test-*.sh skills/*/scripts/test-*.sh; do
+            [ -e "$t" ] || continue
+            echo "== $t"
+            bash "$t" || status=1
+          done
+          exit $status
+      - name: Check tracked files for private patterns
+        run: bash scripts/check-private.sh --all
+
+  secrets:
+    name: Scan full history for secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          tgz="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -sSfL -o "$tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "$SHA256  $tgz" | sha256sum -c -
+          tar -xzf "$tgz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan full history for secrets
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --verbose --log-opts="--all --full-history -m" .'
