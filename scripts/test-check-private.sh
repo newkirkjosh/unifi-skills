@@ -70,6 +70,12 @@ printf '# secret-npc\n' >> "$tmp/repo/scripts/check-private.sh"; git -C "$tmp/re
 expect 1 "term added to the scanner itself" --all
 expect 1 "term staged in the scanner itself" --staged
 cp "$here/check-private.sh" "$tmp/repo/scripts/"; git -C "$tmp/repo" add scripts/check-private.sh
+ln -s "/opt/secret-npc/x" "$tmp/repo/innocent-link"; git -C "$tmp/repo" add innocent-link
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "term in a symlink target" --all
+git -C "$tmp/repo" rm -q --cached innocent-link; rm "$tmp/repo/innocent-link"
+printf 'ok\0\nsecret-npc\n' > "$tmp/msg"
+expect 1 "term in a message with a NUL byte" --msg "$tmp/msg"
 rm "$tmp/repo/private-terms.local"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged

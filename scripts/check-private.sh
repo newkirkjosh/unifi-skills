@@ -59,7 +59,7 @@ case "${1:---all}" in
     match added "$tmp/added"; match_paths "$tmp/paths" ;;
   --msg)
     [ -r "${2:-}" ] || die "cannot read message file: ${2:-<none>}"
-    rc=0; grep -vE '^#' "$2" >"$tmp/msg" 2>"$errs" || rc=$?
+    rc=0; LC_ALL=C grep -avE '^#' "$2" >"$tmp/msg" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "cannot read message file: $2"
     match msg "$tmp/msg" ;;
   --all)
@@ -67,7 +67,17 @@ case "${1:---all}" in
     [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
     [ ! -s "$tmp/tree" ] || hits+="$(cat "$tmp/tree")"$'\n'
     git -C "$root" ls-files -z >"$tmp/paths" 2>"$errs" || die "git ls-files failed"
-    match_paths "$tmp/paths" ;;
+    match_paths "$tmp/paths"
+    # git grep skips symlinks, but a symlink's stored target is published too.
+    git -C "$root" ls-files -s -z >"$tmp/stage" 2>"$errs" || die "git ls-files failed"
+    : >"$tmp/links"
+    while IFS= read -r -d '' entry; do
+      [ "${entry%% *}" = 120000 ] || continue
+      blob="${entry#* }"; blob="${blob%% *}"
+      git -C "$root" cat-file blob "$blob" >>"$tmp/links" 2>"$errs" || die "git cat-file failed"
+      printf '\n' >>"$tmp/links"
+    done <"$tmp/stage"
+    match link "$tmp/links" ;;
   *)
     echo "usage: $0 [--staged | --msg <file> | --all]" >&2; exit 2 ;;
 esac
