@@ -42,13 +42,15 @@ match_paths() { # <file of NUL-separated raw paths>: each path is one record
   local rc=0
   LC_ALL=C grep -qzaiE "${args[@]}" "$1" 2>"$errs" || rc=$?
   [ "$rc" -le 1 ] || die "bad pattern or read error"
-  [ "$rc" -eq 1 ] || hits+="path:$(LC_ALL=C grep -zaiE "${args[@]}" "$1" 2>/dev/null | tr '\0' '\n' | head -c 4000)"$'\n'
+  [ "$rc" -eq 0 ] || return 0
+  LC_ALL=C grep -zaiE "${args[@]}" "$1" >"$tmp/path-hits" 2>/dev/null || true
+  hits+="path:$(head -c 4000 "$tmp/path-hits" | tr '\0' '\n')"$'\n'
 }
 match() { # <label> <file>: append "<label>:<line>:<text>" for each matching line
   local rc=0
   LC_ALL=C grep -qainE "${args[@]}" "$2" 2>"$errs" || rc=$?
   [ "$rc" -le 1 ] || die "bad pattern or read error"
-  [ "$rc" -eq 1 ] || hits+="$(LC_ALL=C grep -ainE "${args[@]}" "$2" 2>/dev/null | sed "s|^|$1:|")"$'\n'
+  [ "$rc" -eq 1 ] || hits+="$(LC_ALL=C grep -ainE "${args[@]}" "$2" 2>/dev/null | LABEL="$1" LC_ALL=C awk '{print ENVIRON["LABEL"] ":" $0}')"$'\n'
 }
 
 # The private-terms file is configuration, never content: reject it in the index.
@@ -76,7 +78,7 @@ case "${1:---all}" in
   --history)
     # Walk every reachable commit's tree: one blob can have had several names.
     git -C "$root" rev-list --all >"$tmp/commits" 2>"$errs" || die "git rev-list failed"
-    : >"$tmp/blobs"; : >"$tmp/paths"
+    : >"$tmp/paths"
     declare -A seen_blob=() seen_tree=() seen_path=()
     while read -r commit; do
       tree="$(git -C "$root" rev-parse "$commit^{tree}" 2>"$errs")" || die "git rev-parse failed"
@@ -93,11 +95,12 @@ case "${1:---all}" in
         fi
         [ "$type" = blob ] && [ -z "${seen_blob[$sha]:-}" ] || continue
         seen_blob[$sha]=1
-        git -C "$root" cat-file blob "$sha" >>"$tmp/blobs" 2>"$errs" || die "git cat-file failed"
-        printf '\n' >>"$tmp/blobs"
+        # One blob at a time, so anchored patterns see only committed lines.
+        git -C "$root" cat-file blob "$sha" >"$tmp/blob" 2>"$errs" || die "git cat-file failed"
+        match "blob $sha ($path)" "$tmp/blob"
       done <"$tmp/entries"
     done <"$tmp/commits"
-    match blob "$tmp/blobs"; match_paths "$tmp/paths" ;;
+    match_paths "$tmp/paths" ;;
   --all)
     rc=0; LC_ALL=C git -C "$root" grep --cached --text -inE "${args[@]}" -- . >"$tmp/tree" 2>"$errs" || rc=$?
     [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"
@@ -123,7 +126,7 @@ if [ -n "$hits" ]; then
   echo "check-private: private terms found (this repo is public; see AGENTS.md):" >&2
   if [ -n "${CI:-}" ]; then
     # CI logs are public: never repeat a match or a path that may contain one.
-    echo "$(wc -l <<<"$hits") matching line(s); run scripts/check-private.sh locally to see them." >&2
+    echo "$(wc -l <<<"$hits") matching line(s); run scripts/check-private.sh ${1:---all} locally to see them." >&2
   else
     echo "$hits" >&2
   fi

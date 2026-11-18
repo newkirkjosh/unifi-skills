@@ -99,6 +99,10 @@ printf 'clean\n' > "$tmp/repo/renamed-away-notes.txt"; g add renamed-away-notes.
 g rm -q plain.txt; g commit -qm drop
 expect 1 "private name renamed away, same content" --history
 rm "$tmp/repo/private-terms.local"
+r2="$tmp/repo2"; mkdir -p "$r2/scripts"; cp "$here/check-private.sh" "$r2/scripts/"; git -C "$r2" init -q
+printf 'x\n' > "$r2/a.txt"; git -C "$r2" add a.txt; git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm a
+printf '^$\n' > "$r2/private-terms.local"
+if bash "$r2/scripts/check-private.sh" --history 2>"$tmp/err"; then echo "ok   history adds no blank lines between blobs"; else echo "FAIL history invented a blank line"; fail=1; fi
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 128\n' > "$tmp/bin/git"; chmod +x "$tmp/bin/git"
 PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
 PATH="$tmp/bin:$PATH" expect 2 "failed git grep" --all
