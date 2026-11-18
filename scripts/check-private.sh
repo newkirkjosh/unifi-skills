@@ -74,16 +74,29 @@ case "${1:---all}" in
     [ -r "${2:-}" ] || die "cannot read message file: ${2:-<none>}"
     match msg "$2" ;;
   --history)
-    git -C "$root" rev-list --objects --all >"$tmp/objects" 2>"$errs" || die "git rev-list failed"
-    git -C "$root" cat-file --batch-check='%(objecttype) %(objectname) %(rest)' <"$tmp/objects" >"$tmp/typed" 2>"$errs" || die "git cat-file failed"
+    # Walk every reachable commit's tree: one blob can have had several names.
+    git -C "$root" rev-list --all >"$tmp/commits" 2>"$errs" || die "git rev-list failed"
     : >"$tmp/blobs"; : >"$tmp/paths"
-    while read -r type sha path; do
-      [ "$type" = blob ] || continue
-      git -C "$root" cat-file blob "$sha" >>"$tmp/blobs" 2>"$errs" || die "git cat-file failed"
-      printf '\n' >>"$tmp/blobs"
-      printf '%s\0' "$path" >>"$tmp/paths"
-      [ "${path##*/}" != private-terms.local ] || hits+="private-terms.local is in history"$'\n'
-    done <"$tmp/typed"
+    declare -A seen_blob=() seen_tree=() seen_path=()
+    while read -r commit; do
+      tree="$(git -C "$root" rev-parse "$commit^{tree}" 2>"$errs")" || die "git rev-parse failed"
+      [ -z "${seen_tree[$tree]:-}" ] || continue
+      seen_tree[$tree]=1
+      git -C "$root" ls-tree -r -z "$tree" >"$tmp/entries" 2>"$errs" || die "git ls-tree failed"
+      while IFS= read -r -d '' entry; do
+        meta="${entry%%$'\t'*}"; path="${entry#*$'\t'}"
+        read -r _mode type sha <<<"$meta"
+        if [ -z "${seen_path[$path]:-}" ]; then
+          seen_path[$path]=1
+          printf '%s\0' "$path" >>"$tmp/paths"
+          [ "${path##*/}" != private-terms.local ] || hits+="private-terms.local is in history"$'\n'
+        fi
+        [ "$type" = blob ] && [ -z "${seen_blob[$sha]:-}" ] || continue
+        seen_blob[$sha]=1
+        git -C "$root" cat-file blob "$sha" >>"$tmp/blobs" 2>"$errs" || die "git cat-file failed"
+        printf '\n' >>"$tmp/blobs"
+      done <"$tmp/entries"
+    done <"$tmp/commits"
     match blob "$tmp/blobs"; match_paths "$tmp/paths" ;;
   --all)
     rc=0; LC_ALL=C git -C "$root" grep --cached --text -inE "${args[@]}" -- . >"$tmp/tree" 2>"$errs" || rc=$?
