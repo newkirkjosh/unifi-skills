@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Regression tests for check-private.sh: clean, hit, bad pattern, unreadable
+# input, failed git command, and CI output that never repeats a match.
+set -uo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+export XDG_CONFIG_HOME="$tmp/config" HOME="$tmp/home"
+mkdir -p "$tmp/repo/scripts" "$HOME"
+cp "$here/check-private.sh" "$tmp/repo/scripts/"
+git -C "$tmp/repo" init -q
+printf '/private-terms.local\n' > "$tmp/repo/.gitignore"; git -C "$tmp/repo" add .gitignore
+git -C "$tmp/repo" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty -m init
+check() { bash "$tmp/repo/scripts/check-private.sh" "$@" 2>"$tmp/err"; }
+fail=0
+expect() { # <want rc> <name> <args...>
+  local want="$1" name="$2"; shift 2
+  check "$@"; local rc=$?
+  if [ "$rc" -eq "$want" ]; then echo "ok   $name"; else echo "FAIL $name: rc $rc, want $want"; cat "$tmp/err"; fail=1; fi
+}
+echo hello > "$tmp/repo/a.txt"; git -C "$tmp/repo" add a.txt
+expect 0 "clean tree" --all
+expect 0 "clean staged" --staged
+printf 'see /%s/someone/x\n' home > "$tmp/repo/b.txt"; git -C "$tmp/repo" add b.txt
+expect 1 "hit in tree" --all
+expect 1 "hit in staged" --staged
+CI=1 check --all; grep -qE 'someone|b\.txt' "$tmp/err" && { echo "FAIL CI output repeats a match or path"; fail=1; } || echo "ok   CI output names neither match nor path"
+printf '/%s/someone/x\n' home > "$tmp/msg"; expect 1 "hit in message" --msg "$tmp/msg"
+printf '# /%s/someone/ in a comment\nfine\n' home > "$tmp/msg"; expect 0 "comment lines ignored" --msg "$tmp/msg"
+expect 2 "unreadable message" --msg "$tmp/missing"
+printf '(\n' > "$tmp/repo/private-terms.local"; expect 2 "bad pattern" --all; rm "$tmp/repo/private-terms.local"
+git -C "$tmp/repo" rm -q --cached b.txt; rm "$tmp/repo/b.txt"
+printf 'private-device\n' > "$tmp/repo/c.txt"; git -C "$tmp/repo" add c.txt
+printf '^private-device$\n' > "$tmp/repo/private-terms.local"
+expect 1 "anchored pattern in tree" --all
+expect 1 "anchored pattern in staged" --staged
+printf '++ %s\n' private-device > "$tmp/repo/c.txt"; git -C "$tmp/repo" add c.txt
+printf 'private-device\n' > "$tmp/repo/private-terms.local"
+expect 1 "added line starting with ++" --staged
+rm "$tmp/repo/private-terms.local"
+git -C "$tmp/repo" rm -q --cached c.txt; rm "$tmp/repo/c.txt"
+printf 'x\n' > "$tmp/repo/secret-npc.md"; git -C "$tmp/repo" add secret-npc.md
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "private term in a tracked path" --all
+expect 1 "private term in a staged path" --staged
+CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI output names a matching path"; fail=1; } || echo "ok   CI output omits matching paths"
+printf '(secret\n' > "$tmp/repo/private-terms.local"
+CI=1 check --all; grep -q secret "$tmp/err" && { echo "FAIL CI error output echoes a pattern"; fail=1; } || echo "ok   CI error output hides the pattern"
+git -C "$tmp/repo" rm -q --cached secret-npc.md; rm "$tmp/repo/secret-npc.md"
+printf 'x\n' > "$tmp/repo/$(printf 'tab\tname')"; printf 'x\n' > "$tmp/repo/$(printf 'caf\303\251-npc.md')"
+git -C "$tmp/repo" add -A
+printf '^tab\tname$\n' > "$tmp/repo/private-terms.local"
+expect 1 "anchored term in a path with a tab" --all
+expect 1 "anchored term in a staged path with a tab" --staged
+printf 'caf\303\251-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "non-ASCII term in a path" --all
+git -C "$tmp/repo" rm -q --cached -- "$(printf 'tab\tname')" "$(printf 'caf\303\251-npc.md')"; rm "$tmp/repo/$(printf 'tab\tname')" "$tmp/repo/$(printf 'caf\303\251-npc.md')"
+printf 'one\n\n' > "$tmp/msg"; printf '^$\n' > "$tmp/repo/private-terms.local"
+expect 1 "trailing blank line kept" --msg "$tmp/msg"
+printf '' > "$tmp/msg"; expect 0 "empty message is clean" --msg "$tmp/msg"
+printf 'bin\0ary secret-npc\n' > "$tmp/repo/blob.bin"; git -C "$tmp/repo" add blob.bin
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "private term in binary content" --all
+expect 1 "private term in staged binary content" --staged
+git -C "$tmp/repo" rm -q --cached blob.bin; rm "$tmp/repo/blob.bin"
+printf 'x\n' > "$tmp/repo/$(printf 'bad\377-secret-npc')"; git -C "$tmp/repo" add -A
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "term in a path with invalid UTF-8" --all
+expect 1 "term in a staged path with invalid UTF-8" --staged
+git -C "$tmp/repo" rm -q --cached -- "$(printf 'bad\377-secret-npc')"; rm "$tmp/repo/$(printf 'bad\377-secret-npc')"
+printf '# secret-npc\n' >> "$tmp/repo/scripts/check-private.sh"; git -C "$tmp/repo" add scripts/check-private.sh
+expect 1 "term added to the scanner itself" --all
+expect 1 "term staged in the scanner itself" --staged
+cp "$here/check-private.sh" "$tmp/repo/scripts/"; git -C "$tmp/repo" add scripts/check-private.sh
+ln -s "/opt/secret-npc/x" "$tmp/repo/innocent-link"; git -C "$tmp/repo" add innocent-link
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "term in a symlink target" --all
+git -C "$tmp/repo" rm -q --cached innocent-link; rm "$tmp/repo/innocent-link"
+printf 'ok\0\nsecret-npc\n' > "$tmp/msg"
+expect 1 "term in a message with a NUL byte" --msg "$tmp/msg"
+printf 'staged-only secret-npc\n' > "$tmp/repo/d.txt"; git -C "$tmp/repo" add d.txt; rm "$tmp/repo/d.txt"
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+expect 1 "term staged but gone from the working tree" --all
+git -C "$tmp/repo" rm -q --cached d.txt
+printf '^nothing-matches$\n' > "$tmp/repo/private-terms.local"; git -C "$tmp/repo" add -f private-terms.local
+expect 1 "force-added private-terms file (tree)" --all
+expect 1 "force-added private-terms file (staged)" --staged
+git -C "$tmp/repo" rm -q --cached private-terms.local
+printf 'secret-npc\n' > "$tmp/repo/private-terms.local"
+printf '# heading secret-npc\n' > "$tmp/msg"
+expect 0 "draft message comment ignored" --msg "$tmp/msg"
+expect 1 "published message keeps hash lines" --published-msg "$tmp/msg"
+g() { git -C "$tmp/repo" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false "$@"; }
+printf 'old secret-npc\n' > "$tmp/repo/gone.txt"; g add gone.txt; g commit -qm add; g rm -q gone.txt; g commit -qm remove
+expect 0 "removed content is not in the tree" --all
+expect 1 "removed content is in history" --history
+printf 'renamed-away\n' > "$tmp/repo/private-terms.local"
+expect 0 "term not in history yet" --history
+printf 'clean\n' > "$tmp/repo/renamed-away-notes.txt"; g add renamed-away-notes.txt; g commit -qm name; g mv renamed-away-notes.txt plain.txt; g commit -qm rename
+g rm -q plain.txt; g commit -qm drop
+expect 1 "private name renamed away, same content" --history
+rm "$tmp/repo/private-terms.local"
+r2="$tmp/repo2"; mkdir -p "$r2/scripts"; cp "$here/check-private.sh" "$r2/scripts/"; git -C "$r2" init -q
+printf 'x\n' > "$r2/a.txt"; git -C "$r2" add a.txt; git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm a
+printf '^$\n' > "$r2/private-terms.local"
+if bash "$r2/scripts/check-private.sh" --history 2>"$tmp/err"; then echo "ok   history adds no blank lines between blobs"; else echo "FAIL history invented a blank line"; fail=1; fi
+printf 'never-repeat-me\n' > "$r2/private-terms.local"; git -C "$r2" add -f private-terms.local
+bash "$r2/scripts/check-private.sh" --all >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   tracked terms file flagged without repeating terms"; else echo "FAIL tracked terms file output"; fail=1; fi
+bash "$r2/scripts/check-private.sh" --staged >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   staged terms file flagged without repeating terms"; else echo "FAIL staged terms file output"; fail=1; fi
+git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm terms
+bash "$r2/scripts/check-private.sh" --history >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   terms file in history flagged without repeating terms"; else echo "FAIL history terms file output"; fail=1; fi
+git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false rm -q --cached private-terms.local; git -C "$r2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm untrack
+tree="$(git -C "$r2" rev-parse 'HEAD^{tree}')"; parent="$(git -C "$r2" rev-parse HEAD)"
+c="$(printf 'tree %s\nparent %s\nauthor t <t@example.com> 1 +0000\ncommitter t <t@example.com> 1 +0000\n\nsubject\0hidden-after-nul\n' "$tree" "$parent" | git -C "$r2" hash-object -t commit -w --stdin --literally)"
+git -C "$r2" update-ref refs/heads/nul "$c"
+bash "$r2/scripts/check-private.sh" --export-messages "$tmp/messages"
+if LC_ALL=C grep -aq hidden-after-nul "$tmp/messages"; then echo "ok   exported messages keep text after a NUL"; else echo "FAIL message export stopped at a NUL"; fail=1; fi
+mkdir -p "$tmp/fake"; printf '#!/bin/sh\ncase "$*" in *ls-files*) exit 128;; esac\nexec /usr/bin/env -i PATH="%s" git "$@"\n' "$PATH" > "$tmp/fake/git"; chmod +x "$tmp/fake/git"
+PATH="$tmp/fake:$PATH" bash "$r2/scripts/check-private.sh" --staged >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then echo "ok   failed terms-file lookup fails closed"; else echo "FAIL terms-file lookup rc $rc"; fail=1; fi
+{ echo keep-this-line; bash "$r2/scripts/check-private.sh" --msg "$tmp/messages"; } >"$tmp/log" 2>&1 || true
+if head -1 "$tmp/log" | grep -q '^keep-this-line$'; then echo "ok   a caller's log file is not truncated"; else echo "FAIL the scanner truncated its caller's log"; fail=1; fi
+cfg="$tmp/cfg-test"; mkdir -p "$cfg/git"; ln -s "$cfg/missing" "$cfg/git/private-terms"
+XDG_CONFIG_HOME="$cfg" bash "$r2/scripts/check-private.sh" --all >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then echo "ok   dangling private-terms link fails closed"; else echo "FAIL dangling terms link rc $rc"; fail=1; fi
+rm "$cfg/git/private-terms"; printf 'x\n' > "$cfg/git/private-terms"; chmod 000 "$cfg/git"
+XDG_CONFIG_HOME="$cfg" bash "$r2/scripts/check-private.sh" --all >/dev/null 2>&1; rc=$?; chmod 755 "$cfg/git"
+if [ "$rc" -eq 2 ] || [ "$(id -u)" -eq 0 ]; then echo "ok   unreadable terms folder fails closed"; else echo "FAIL unreadable terms folder rc $rc"; fail=1; fi
+r3="$tmp/repo3"; mkdir -p "$r3/scripts"; cp "$here/check-private.sh" "$r3/scripts/"; git -C "$r3" init -q
+printf '(never-repeat-me\n' > "$r3/private-terms.local"; git -C "$r3" add -f private-terms.local
+bash "$r3/scripts/check-private.sh" --all >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q never-repeat-me "$tmp/out"; then echo "ok   malformed tracked terms file is flagged, not loaded"; else echo "FAIL malformed tracked terms rc $rc"; fail=1; fi
+git -C "$r3" rm -q --cached private-terms.local; rm "$r3/private-terms.local"
+printf 'x\n' > "$r3/a"; git -C "$r3" add a; git -C "$r3" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -qm subject
+bash "$r3/scripts/check-private.sh" --export-messages "$tmp/m3"
+printf '^$\n' > "$r3/private-terms.local"
+if bash "$r3/scripts/check-private.sh" --published-msg "$tmp/m3" 2>/dev/null; then echo "ok   exported messages gain no blank line"; else echo "FAIL export invented a blank line"; fail=1; fi
+rm "$r3/private-terms.local"
+real_git="$(command -v git)"; mkdir -p "$tmp/bin"
+fail_sub() { printf '#!/bin/sh\n[ "$3" = %s ] && exit 128\nexec "%s" "$@"\n' "$1" "$real_git" > "$tmp/bin/git"; chmod +x "$tmp/bin/git"; }
+fail_sub diff; PATH="$tmp/bin:$PATH" expect 2 "failed git diff" --staged
+fail_sub grep; PATH="$tmp/bin:$PATH" expect 2 "failed git grep" --all
+exit $fail
